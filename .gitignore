@@ -1,0 +1,14 @@
+.DS_Store
+
+.idea/*
+!.idea/dictionaries/project.xml
+*.iml
+
+.vscode/**
+!.vscode/settings.json
+
+.zed/**
+!.zed/settings.json
+
+debug/
+target/
