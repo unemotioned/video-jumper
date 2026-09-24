@@ -40,7 +40,6 @@ more than 10 times, I came up with an idea:
 ## TODO
 
 - [x] launch media player and play video
-- [ ] add vlc to Windows system environment variable path
 - [ ] start with vj command from terminal
 - [ ] terminate process when video ends
 - [ ] play multiple videos using a queue
