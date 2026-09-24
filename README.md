@@ -40,7 +40,10 @@ more than 10 times, I came up with an idea:
 ## TODO
 
 - [x] launch media player and play video
-- [ ] start with vj command from terminal
+- [-] start with vj command from terminal
+  - [ ] macos
+  - [x] linux
+  - [ ] windows
 - [ ] terminate process when video ends
 - [ ] play multiple videos using a queue
 - [ ] jump from one frame to another
