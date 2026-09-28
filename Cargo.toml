@@ -8,4 +8,4 @@ name = "vj"
 path = "src/main.rs"
 
 [dependencies]
-natord = "1.0"
+natord = "1.0.9"

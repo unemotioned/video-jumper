@@ -1,6 +1,14 @@
 use std::{env, fs, process::Command};
 
-const EXTENSIONS: [&str; 3] = ["mp4", "avi", "mov"];
+const EXTENSIONS: [&str; 3] = ["avi", "mov", "mp4"];
+
+fn matches_video(name: &str) -> bool {
+    // next_back(): last piece after split
+    // is_some_and(): true if Some and closure returns true
+    name.split('.')
+        .next_back()
+        .is_some_and(|ext| EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+}
 
 fn read_dir() -> Vec<String> {
     let dir = env::current_dir().expect("Failed to get current directory");
@@ -24,21 +32,14 @@ fn read_dir() -> Vec<String> {
     files
 }
 
-fn matches_video(name: &str) -> bool {
-    // next_back(): last piece after split
-    // is_some_and(): true if Some and closure returns true
-    name.split('.')
-        .next_back()
-        .is_some_and(|ext| EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
-}
-
 fn main() {
-    let videos: Vec<String> = read_dir();
+    let videos = read_dir();
+    let speed: f32 = 1.5;
 
     let mut vlc = Command::new("mpv")
-        .arg("--speed=1.5")
+        .arg(format!("--speed={}", speed)) // format!: put value into {}
         .arg("--")
-        .arg(&videos[13])
+        .arg(&videos[0])
         .spawn()
         .expect("Failed to launch MPV");
 
