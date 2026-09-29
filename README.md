@@ -14,6 +14,6 @@ more than 10 times, I came up with an idea:
 - [x] spawn mpv and play video
 - [x] start with vj command
 - [x] list videos in current directory
-- [ ] play selected videos
+- [x] play selected videos
 - [ ] get current videos time/frame live
 - [ ] get playback speed info by passing option and argument
