@@ -1,4 +1,58 @@
-use super::{parse_selection, selection_start};
+use super::{get_property, parse_selection, selection_start};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::time::Duration;
+
+#[test]
+fn ipc_reads_positions_despite_events_and_unavailable_properties() {
+    let (client, server) = UnixStream::pair().unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let player = std::thread::spawn(move || {
+        let mut server = BufReader::new(server);
+        for (name, reply) in [
+            (
+                "time-pos",
+                r#"{"request_id":1,"error":"success","data":12.375}"#,
+            ),
+            (
+                "estimated-frame-number",
+                r#"{"request_id":1,"error":"success","data":297}"#,
+            ),
+            (
+                "time-pos",
+                r#"{"request_id":1,"error":"property unavailable"}"#,
+            ),
+        ] {
+            let mut request = String::new();
+            server.read_line(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+            assert_eq!(
+                request["command"],
+                serde_json::json!(["get_property", name])
+            );
+            assert_eq!(request["request_id"], 1);
+            writeln!(
+                server.get_mut(),
+                "{{\"event\":\"playback-restart\"}}\n{reply}"
+            )
+            .unwrap();
+        }
+    });
+    let mut client = BufReader::new(client);
+    assert_eq!(get_property(&mut client, "time-pos").unwrap(), 12.375);
+    assert_eq!(
+        get_property(&mut client, "estimated-frame-number").unwrap(),
+        297
+    );
+    assert!(get_property(&mut client, "time-pos").unwrap().is_null());
+    player.join().unwrap();
+    assert!(get_property(&mut client, "time-pos").is_err());
+}
 
 #[test]
 fn open_ranges_include_the_selected_endpoint() {
