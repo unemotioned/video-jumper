@@ -27,6 +27,20 @@ The frame number is mpv's `estimated-frame-number`, which may be approximate,
 especially for variable-frame-rate video. Unavailable values appear as `--`.
 The socket directory is removed when playback finishes.
 
+## Source layout
+
+- `src/main.rs` — application flow, error reporting, and exit status.
+- `src/videos.rs` — video discovery and natural filename sorting.
+- `src/selection.rs` — numbered listing, input prompt, and selection parsing.
+- `src/playback.rs` — mpv process lifecycle and live status over JSON IPC.
+- `src/tests.rs` — selection and IPC regression tests.
+
+Validate changes with:
+
+```sh
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+```
+
 ## TODO
 
 - [x] spawn mpv and play video

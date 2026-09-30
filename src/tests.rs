@@ -1,4 +1,5 @@
-use super::{get_property, parse_selection, selection_start};
+use super::playback::get_property;
+use super::selection::{parse_selection, selection_start};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
