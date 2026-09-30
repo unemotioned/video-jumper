@@ -21,6 +21,24 @@ fn selection_start(name: &str) -> usize {
     }
 }
 
+fn parse_selection(input: &str, start: usize, end: usize) -> Option<Vec<usize>> {
+    let indices: Vec<usize> = input
+        .split_whitespace()
+        .map(|token| {
+            token
+                .parse::<usize>()
+                .ok()
+                .filter(|num| (start..=end).contains(num))
+                .map(|num| num - start)
+        })
+        .collect::<Option<_>>()?;
+    if indices.is_empty() {
+        None
+    } else {
+        Some(indices)
+    }
+}
+
 fn read_dir() -> Vec<String> {
     let dir = env::current_dir().expect("Failed to get current directory");
 
@@ -56,7 +74,7 @@ fn main() {
         println!("{:>3}. {}", i + start, name);
     }
 
-    print!("\nSelect a video: ");
+    print!("\nSelect videos (space-separated numbers, in playback order): ");
     io::stdout().flush().unwrap();
 
     let mut input = String::new();
@@ -64,12 +82,11 @@ fn main() {
         .read_line(&mut input)
         .expect("Failed to read input");
 
-    // Vector indexing requires `usize`
-    let index = match input.trim().parse::<usize>() {
-        Ok(num) if (start..=end).contains(&num) => num - start,
-        _ => {
+    let indices = match parse_selection(&input, start, end) {
+        Some(indices) => indices,
+        None => {
             eprintln!(
-                "Invalid selection: enter a number between {} and {}",
+                "Invalid selection: enter space-separated numbers between {} and {}",
                 start, end
             );
             std::process::exit(1);
@@ -79,7 +96,7 @@ fn main() {
     let mut player = Command::new("mpv")
         .arg(format!("--speed={}", speed)) // format!: put value into {}
         .arg("--")
-        .arg(&videos[index])
+        .args(indices.iter().map(|&index| &videos[index]))
         .spawn()
         .expect("Failed to launch MPV");
 
