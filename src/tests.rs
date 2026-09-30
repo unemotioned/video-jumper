@@ -4,6 +4,124 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
+use super::config::{Action, Config};
+use super::playback::execute_action;
+
+#[test]
+fn config_accepts_example_and_triggers_jumps_at_boundaries() {
+    let config = Config::parse(
+        r#"
+[videos."nichijou_1.mp4"]
+jumps = [
+  { from = { frame = "3391" }, to = { frame = "5541" }, is_opening = true },
+  { from = { frame = "15675" }, to = { frame = "15969" }, is_opening = false },
+  { end = { time = "1405.989" } },
+]
+"#,
+    )
+    .unwrap();
+    let jumps = &config.videos["nichijou_1.mp4"].jumps;
+    let fps = Some(24.0);
+    assert_eq!(jumps[0].action(3390.0 / 24.0, fps), None);
+    assert_eq!(
+        jumps[0].action(3391.0 / 24.0, fps),
+        Some(Action::Seek(5541.0 / 24.0))
+    );
+    assert_eq!(
+        jumps[0].action(5500.0 / 24.0, fps),
+        Some(Action::Seek(5541.0 / 24.0))
+    );
+    assert_eq!(jumps[0].action(5541.0 / 24.0, fps), None);
+    assert_eq!(
+        jumps[1].action(15675.0 / 24.0, fps),
+        Some(Action::Seek(15969.0 / 24.0))
+    );
+    assert_eq!(jumps[2].action(1405.988, None), None);
+    assert_eq!(jumps[2].action(1405.989, None), Some(Action::End));
+    assert_eq!(jumps[2].action(1500.0, None), Some(Action::End));
+}
+
+#[test]
+fn time_jumps_and_frame_end_accept_numeric_values() {
+    let config = Config::parse(
+        r#"[videos."test.mp4"]
+jumps = [{ from = { time = 1.5 }, to = { time = 3 } }, { end = { frame = 120 } }]"#,
+    )
+    .unwrap();
+    let jumps = &config.videos["test.mp4"].jumps;
+    assert_eq!(jumps[0].action(1.5, None), Some(Action::Seek(3.0)));
+    assert_eq!(jumps[1].action(5.0, Some(24.0)), Some(Action::End));
+    for fps in [None, Some(0.0), Some(-1.0), Some(f64::NAN)] {
+        assert_eq!(jumps[1].action(5.0, fps), None);
+    }
+}
+
+#[test]
+fn invalid_jump_configuration_is_rejected() {
+    for jump in [
+        "{ end = { time = -1 } }",
+        "{ end = { time = 'NaN' } }",
+        "{ end = { time = 'oops' } }",
+        "{ end = { frame = 1.5 } }",
+        "{ end = { frame = 1, time = 2 } }",
+        "{ from = { time = 2 }, to = { time = 1 } }",
+        "{ from = { frame = 2 }, to = { frame = 2 } }",
+        "{ from = { time = 2 } }",
+        "{ end = { time = 2 }, to = { time = 3 } }",
+    ] {
+        assert!(
+            Config::parse(&format!("[videos.'test.mp4']\njumps = [{jump}]")).is_err(),
+            "{jump}"
+        );
+    }
+}
+
+#[test]
+fn absent_config_is_optional() {
+    let directory = tempfile::tempdir().unwrap();
+    assert!(Config::load(directory.path()).unwrap().videos.is_empty());
+}
+
+#[test]
+fn ipc_sends_exact_seek_and_forced_playlist_advance() {
+    let (client, server) = UnixStream::pair().unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let player = std::thread::spawn(move || {
+        let mut server = BufReader::new(server);
+        for expected in [
+            serde_json::json!(["seek", 230.875, "absolute+exact"]),
+            serde_json::json!(["playlist-next", "force"]),
+            serde_json::json!(["seek", 1.0, "absolute+exact"]),
+        ] {
+            let mut line = String::new();
+            server.read_line(&mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["command"], expected);
+            let error = if expected[1] == 1.0 {
+                "command failed"
+            } else {
+                "success"
+            };
+            writeln!(
+                server.get_mut(),
+                "{}",
+                serde_json::json!({"request_id": 1, "error": error})
+            )
+            .unwrap();
+        }
+    });
+    let mut client = BufReader::new(client);
+    execute_action(&mut client, Action::Seek(230.875)).unwrap();
+    execute_action(&mut client, Action::End).unwrap();
+    assert!(execute_action(&mut client, Action::Seek(1.0)).is_err());
+    player.join().unwrap();
+}
+
 #[test]
 fn ipc_reads_positions_despite_events_and_unavailable_properties() {
     let (client, server) = UnixStream::pair().unwrap();
