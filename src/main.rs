@@ -11,6 +11,16 @@ fn matches_video(name: &str) -> bool {
         .is_some_and(|ext| EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
+fn selection_start(name: &str) -> usize {
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let suffix = &stem[stem.trim_end_matches(|c: char| c.is_ascii_digit()).len()..];
+    if !suffix.is_empty() && suffix.bytes().all(|digit| digit == b'0') {
+        0
+    } else {
+        1
+    }
+}
+
 fn read_dir() -> Vec<String> {
     let dir = env::current_dir().expect("Failed to get current directory");
 
@@ -35,13 +45,15 @@ fn read_dir() -> Vec<String> {
 
 fn main() {
     let videos = read_dir();
+    let start = selection_start(&videos[0]);
+    let end = start + videos.len() - 1;
     let speed: f32 = 1.5;
 
     // iter(): yields &String for each element
     // enumerate(): wraps each item as (index, item)
     for (i, name) in videos.iter().enumerate() {
         // {:>3}: right-align index in 3 chars
-        println!("{:>3}. {}", i + 1, name);
+        println!("{:>3}. {}", i + start, name);
     }
 
     print!("\nSelect a video: ");
@@ -54,12 +66,11 @@ fn main() {
 
     // Vector indexing requires `usize`
     let index = match input.trim().parse::<usize>() {
-        // 1..=videos.len(): builds inclusive range
-        Ok(num) if (1..=videos.len()).contains(&num) => num - 1,
+        Ok(num) if (start..=end).contains(&num) => num - start,
         _ => {
             eprintln!(
-                "Invalid selection: enter a number between 1 and {}",
-                videos.len()
+                "Invalid selection: enter a number between {} and {}",
+                start, end
             );
             std::process::exit(1);
         }
@@ -74,3 +85,6 @@ fn main() {
 
     player.wait().expect("Failed to wait for MPV");
 }
+
+#[cfg(test)]
+mod tests;
