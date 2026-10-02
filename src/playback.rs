@@ -1,5 +1,8 @@
+#[cfg(windows)]
+use std::fs::{File as IpcStream, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as IpcStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -17,8 +20,17 @@ pub(crate) fn play<'a>(
 ) -> io::Result<()> {
     let videos: Vec<_> = videos.into_iter().collect();
     // A private, short path avoids Unix socket path-length limits on macOS.
+    #[cfg(unix)]
     let ipc_dir = tempfile::Builder::new().prefix("vj-").tempdir_in("/tmp")?;
+    #[cfg(windows)]
+    let ipc_dir = tempfile::Builder::new().prefix("vj-").tempdir()?;
+    #[cfg(unix)]
     let socket = ipc_dir.path().join("mpv.sock");
+    #[cfg(windows)]
+    let socket = std::path::PathBuf::from(format!(
+        r"\\.\pipe\{}-mpv",
+        ipc_dir.path().file_name().unwrap().to_string_lossy()
+    ));
     let mut player = Command::new("mpv")
         .arg(format!("--speed={PLAYBACK_SPEED}"))
         .arg(format!("--input-ipc-server={}", socket.display()))
@@ -50,7 +62,7 @@ pub(crate) fn play<'a>(
     Ok(())
 }
 
-pub(crate) fn get_property(ipc: &mut BufReader<UnixStream>, name: &str) -> io::Result<Value> {
+pub(crate) fn get_property(ipc: &mut BufReader<IpcStream>, name: &str) -> io::Result<Value> {
     let response = request(ipc, json!(["get_property", name]))?;
     Ok(if response["error"] == "success" {
         response["data"].clone()
@@ -59,7 +71,7 @@ pub(crate) fn get_property(ipc: &mut BufReader<UnixStream>, name: &str) -> io::R
     })
 }
 
-fn request(ipc: &mut BufReader<UnixStream>, command: Value) -> io::Result<Value> {
+fn request(ipc: &mut BufReader<IpcStream>, command: Value) -> io::Result<Value> {
     let request = json!({"command": command, "request_id": 1});
     writeln!(ipc.get_mut(), "{request}")?;
     loop {
@@ -78,7 +90,7 @@ fn request(ipc: &mut BufReader<UnixStream>, command: Value) -> io::Result<Value>
     }
 }
 
-pub(crate) fn execute_action(ipc: &mut BufReader<UnixStream>, action: Action) -> io::Result<()> {
+pub(crate) fn execute_action(ipc: &mut BufReader<IpcStream>, action: Action) -> io::Result<()> {
     let command = match action {
         Action::Seek(seconds) => json!(["seek", seconds, "absolute+exact"]),
         Action::End => json!(["playlist-next", "force"]),
@@ -104,14 +116,21 @@ fn report_playback(
         if player.try_wait()?.is_some() {
             return Ok(());
         }
-        match UnixStream::connect(socket) {
+        #[cfg(unix)]
+        let connection = IpcStream::connect(socket);
+        #[cfg(windows)]
+        let connection = OpenOptions::new().read(true).write(true).open(socket);
+        match connection {
             Ok(stream) => break stream,
             Err(error) if Instant::now() >= deadline => return Err(error),
             Err(_) => thread::sleep(Duration::from_millis(50)),
         }
     };
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    #[cfg(unix)]
+    {
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    }
     let mut ipc = BufReader::new(stream);
     let mut current_entry = None;
     let mut fired = Vec::new();
