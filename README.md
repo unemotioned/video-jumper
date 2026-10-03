@@ -19,6 +19,7 @@ provides playback position through mpv's JSON IPC interface, polled about
 every 50 milliseconds:
 
 ```text
+Playing: nichijou_1.mp4
 Time:        12.375s | Frame (estimated):          297
 ```
 

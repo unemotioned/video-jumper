@@ -144,10 +144,12 @@ fn report_playback(
         if entry != get_property(&mut ipc, "playlist-pos")?.as_u64() {
             continue;
         }
-        let video = entry
-            .and_then(|index| videos.get(index as usize))
-            .and_then(|name| config.videos.get(*name));
+        let filename = entry.and_then(|index| videos.get(index as usize));
+        let video = filename.and_then(|name| config.videos.get(*name));
         if current_entry != entry {
+            if let Some(filename) = filename {
+                println!("\nPlaying: {filename}");
+            }
             current_entry = entry;
             fired = vec![false; video.map_or(0, |video| video.jumps.len())];
             ended = false;
