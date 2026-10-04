@@ -29,6 +29,7 @@ pub(crate) enum Jump {
 pub(crate) struct Skip {
     pub from: Position,
     pub to: Position,
+    // Opening status is metadata; all skips use the same playback rules.
     #[serde(default, rename = "is_opening")]
     pub _is_opening: bool,
 }
@@ -50,6 +51,7 @@ pub(crate) enum Position {
 #[serde(try_from = "RawNumber")]
 pub(crate) struct Number(f64);
 
+// Accept both quoted and numeric TOML positions.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawNumber {
@@ -73,6 +75,16 @@ impl TryFrom<RawNumber> for Number {
 }
 
 impl Position {
+    fn validate(&self) -> Result<(), &'static str> {
+        if let Self::Frame(value) = self
+            && value.0.fract() != 0.0
+        {
+            return Err("frames must be whole numbers");
+        }
+        Ok(())
+    }
+
+    // Frame-based jumps wait until a valid media FPS is available.
     pub(crate) fn seconds(&self, fps: Option<f64>) -> Option<f64> {
         match self {
             Self::Time(value) => Some(value.0),
@@ -90,6 +102,25 @@ pub(crate) enum Action {
 }
 
 impl Jump {
+    fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::Skip(skip) => {
+                // Only same-unit bounds can be compared without the video's FPS.
+                let bounds = match (&skip.from, &skip.to) {
+                    (Position::Frame(from), Position::Frame(to))
+                    | (Position::Time(from), Position::Time(to)) => Some((from.0, to.0)),
+                    _ => None,
+                };
+                if bounds.is_some_and(|(from, to)| to <= from) {
+                    return Err("jump destination must be after its start");
+                }
+                skip.from.validate()?;
+                skip.to.validate()
+            }
+            Self::End(end) => end.end.validate(),
+        }
+    }
+
     pub(crate) fn action(&self, time: f64, fps: Option<f64>) -> Option<Action> {
         match self {
             Self::Skip(skip) => {
@@ -117,29 +148,8 @@ impl Config {
         let config: Self = toml::from_str(contents).map_err(|error| error.to_string())?;
         for (name, video) in &config.videos {
             for jump in &video.jumps {
-                let positions = match jump {
-                    Jump::Skip(skip) => {
-                        if matches!(
-                            (&skip.from, &skip.to),
-                            (Position::Frame(_), Position::Frame(_))
-                                | (Position::Time(_), Position::Time(_))
-                        ) && skip.to.seconds(Some(1.0)) <= skip.from.seconds(Some(1.0))
-                        {
-                            return Err(format!(
-                                "{name}: jump destination must be after its start"
-                            ));
-                        }
-                        vec![&skip.from, &skip.to]
-                    }
-                    Jump::End(end) => vec![&end.end],
-                };
-                for position in positions {
-                    if let Position::Frame(value) = position
-                        && value.0.fract() != 0.0
-                    {
-                        return Err(format!("{name}: frames must be whole numbers"));
-                    }
-                }
+                jump.validate()
+                    .map_err(|error| format!("{name}: {error}"))?;
             }
         }
         Ok(config)

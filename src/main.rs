@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let directory = std::env::current_dir()?;
+    // Validate all config entries before prompting or launching playback.
     let config = config::Config::load(&directory)?;
     let videos = videos::discover(&directory)?;
     if videos.is_empty() {

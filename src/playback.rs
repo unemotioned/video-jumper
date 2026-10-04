@@ -13,6 +13,10 @@ use serde_json::{Value, json};
 use crate::config::{Action, Config};
 
 const PLAYBACK_SPEED: f32 = 1.5;
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
+const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) fn play<'a>(
     videos: impl IntoIterator<Item = &'a str>,
@@ -36,6 +40,7 @@ pub(crate) fn play<'a>(
         .arg(format!("--input-ipc-server={}", socket.display()))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        // Keep filenames beginning with '-' from being interpreted as options.
         .arg("--")
         .args(&videos)
         .spawn()
@@ -62,7 +67,7 @@ pub(crate) fn play<'a>(
     Ok(())
 }
 
-pub(crate) fn get_property(ipc: &mut BufReader<IpcStream>, name: &str) -> io::Result<Value> {
+fn get_property(ipc: &mut BufReader<IpcStream>, name: &str) -> io::Result<Value> {
     let response = request(ipc, json!(["get_property", name]))?;
     Ok(if response["error"] == "success" {
         response["data"].clone()
@@ -72,6 +77,7 @@ pub(crate) fn get_property(ipc: &mut BufReader<IpcStream>, name: &str) -> io::Re
 }
 
 fn request(ipc: &mut BufReader<IpcStream>, command: Value) -> io::Result<Value> {
+    // Requests are sequential, so one fixed reply ID is sufficient.
     let request = json!({"command": command, "request_id": 1});
     writeln!(ipc.get_mut(), "{request}")?;
     loop {
@@ -90,7 +96,7 @@ fn request(ipc: &mut BufReader<IpcStream>, command: Value) -> io::Result<Value> 
     }
 }
 
-pub(crate) fn execute_action(ipc: &mut BufReader<IpcStream>, action: Action) -> io::Result<()> {
+fn execute_action(ipc: &mut BufReader<IpcStream>, action: Action) -> io::Result<()> {
     let command = match action {
         Action::Seek(seconds) => json!(["seek", seconds, "absolute+exact"]),
         Action::End => json!(["playlist-next", "force"]),
@@ -105,16 +111,12 @@ pub(crate) fn execute_action(ipc: &mut BufReader<IpcStream>, action: Action) -> 
     Ok(())
 }
 
-fn report_playback(
-    player: &mut Child,
-    socket: &Path,
-    videos: &[&str],
-    config: &Config,
-) -> io::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+fn connect_ipc(player: &mut Child, socket: &Path) -> io::Result<Option<BufReader<IpcStream>>> {
+    // MPV may take a moment to create its IPC endpoint after spawning.
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
     let stream = loop {
         if player.try_wait()?.is_some() {
-            return Ok(());
+            return Ok(None);
         }
         #[cfg(unix)]
         let connection = IpcStream::connect(socket);
@@ -123,15 +125,26 @@ fn report_playback(
         match connection {
             Ok(stream) => break stream,
             Err(error) if Instant::now() >= deadline => return Err(error),
-            Err(_) => thread::sleep(Duration::from_millis(50)),
+            Err(_) => thread::sleep(POLL_INTERVAL),
         }
     };
     #[cfg(unix)]
     {
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_read_timeout(Some(IPC_TIMEOUT))?;
+        stream.set_write_timeout(Some(IPC_TIMEOUT))?;
     }
-    let mut ipc = BufReader::new(stream);
+    Ok(Some(BufReader::new(stream)))
+}
+
+fn report_playback(
+    player: &mut Child,
+    socket: &Path,
+    videos: &[&str],
+    config: &Config,
+) -> io::Result<()> {
+    let Some(mut ipc) = connect_ipc(player, socket)? else {
+        return Ok(());
+    };
     let mut current_entry = None;
     let mut fired = Vec::new();
     let mut ended = false;
@@ -146,6 +159,7 @@ fn report_playback(
         }
         let filename = entry.and_then(|index| videos.get(index as usize));
         let video = filename.and_then(|name| config.videos.get(*name));
+        // Reset per playlist entry so repeated filenames replay their jumps.
         if current_entry != entry {
             if let Some(filename) = filename {
                 println!("\nPlaying: {filename}");
@@ -165,6 +179,7 @@ fn report_playback(
                     ended = action == Action::End;
                     execute_action(&mut ipc, action)?;
                     fired[index] = true;
+                    // A jump invalidates this time sample; poll again before acting.
                     break;
                 }
             }
@@ -177,7 +192,7 @@ fn report_playback(
             .map_or_else(|| "--".to_owned(), |number| number.to_string());
         print!("\rTime: {time:>14} | Frame (estimated): {frame:>12}");
         io::stdout().flush()?;
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(POLL_INTERVAL);
     }
     Ok(())
 }

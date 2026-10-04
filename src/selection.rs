@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+// A trailing all-zero number (e.g. episode00) opts into zero-based labels.
 pub(crate) fn selection_start(name: &str) -> usize {
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
     let suffix = &stem[stem.trim_end_matches(|c: char| c.is_ascii_digit()).len()..];
@@ -14,6 +15,7 @@ pub(crate) fn parse_selection(input: &str, start: usize, end: usize) -> Option<V
     let mut indices = Vec::new();
     for token in input.split_whitespace() {
         let (first, last) = if let Some((left, right)) = token.split_once(':') {
+            // Omitted range bounds extend to the first or last video.
             let first = if left.is_empty() {
                 start
             } else {
@@ -32,6 +34,7 @@ pub(crate) fn parse_selection(input: &str, start: usize, end: usize) -> Option<V
         if first < start || last > end || first > last {
             return None;
         }
+        // Convert inclusive labels to indices, preserving order and duplicates.
         indices.extend((first..=last).map(|number| number - start));
     }
     if indices.is_empty() {

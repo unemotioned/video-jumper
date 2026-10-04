@@ -9,12 +9,14 @@ fn matches_video(name: &str) -> bool {
 }
 
 pub(crate) fn discover(directory: &Path) -> io::Result<Vec<String>> {
+    // Inspect direct directory entries only; skip unreadable entries.
     let mut files: Vec<String> = fs::read_dir(directory)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| matches_video(name))
         .collect();
 
+    // Natural ordering keeps episode2 ahead of episode10.
     files.sort_by(|a, b| natord::compare(a, b));
     Ok(files)
 }
