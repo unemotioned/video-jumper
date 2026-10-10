@@ -35,8 +35,8 @@ Create `.vj.toml` in the directory containing your videos:
 ```toml
 [videos."nichijou_1.mp4"]
 jumps = [
-  { from = { frame = "3391" }, to = { frame = "5541" }, is_opening = true },
-  { from = { frame = "15675" }, to = { frame = "15969" }, is_opening = false },
+  { from = { frame = "3391" }, to = { frame = "5541" }, type = "intro" },
+  { from = { frame = "15675" }, to = { frame = "15969" }, type = "outro" },
   { from = { time = "1405.989" } },
 ]
 ```
@@ -51,7 +51,9 @@ you want to configure. Videos without a configuration play normally.
   to the next selected video. If it is last, playback ends.
 - Positions use either `time` in seconds or `frame` (zero-based). Both quoted
   numbers and TOML numbers are accepted. Frame numbers must be whole numbers.
-- `is_opening` is optional metadata; both `true` and `false` jumps are applied.
+- `type` is optional metadata on any jump: `"intro"`, `"outro"`, `"ending"`, or
+  `"normal"` (the default). All types are applied using the same playback rules.
+  Replace the former `is_opening` field with `type` in existing configurations.
 
 Each jump runs once per playlist entry, including repeated selections of the same
 video. Frame positions are converted to seconds using mpv's `container-fps` and

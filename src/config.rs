@@ -29,15 +29,27 @@ pub(crate) enum Jump {
 pub(crate) struct Skip {
     pub from: Position,
     pub to: Option<Position>,
-    // Opening status is metadata; all skips use the same playback rules.
-    #[serde(default, rename = "is_opening")]
-    pub _is_opening: bool,
+    // Jump type is metadata; all skips use the same playback rules.
+    #[serde(default, rename = "type")]
+    pub _kind: JumpType,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct End {
     pub end: Position,
+    #[serde(default, rename = "type")]
+    pub _kind: JumpType,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum JumpType {
+    Intro,
+    Outro,
+    Ending,
+    #[default]
+    Normal,
 }
 
 #[derive(Deserialize)]
@@ -164,13 +176,47 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Config};
+    use super::{Action, Config, Jump, JumpType};
+
+    #[test]
+    fn jump_types_are_validated_and_default_to_normal() {
+        for position in ["from", "end"] {
+            for (metadata, expected) in [
+                ("", JumpType::Normal),
+                (", type = \"intro\"", JumpType::Intro),
+                (", type = \"outro\"", JumpType::Outro),
+                (", type = \"ending\"", JumpType::Ending),
+                (", type = \"normal\"", JumpType::Normal),
+            ] {
+                let config = Config::parse(&format!(
+                    "[videos.\"episode.mp4\"]\njumps = [{{ {position} = {{ time = 10 }}{metadata} }}]"
+                ))
+                .unwrap();
+                let jump = &config.videos["episode.mp4"].jumps[0];
+                let kind = match jump {
+                    Jump::Skip(skip) => &skip._kind,
+                    Jump::End(end) => &end._kind,
+                };
+                assert_eq!(kind, &expected);
+                assert_eq!(jump.action(9.0, None), None);
+                assert_eq!(jump.action(10.0, None), Some(Action::End));
+            }
+            for metadata in ["type = \"opening\"", "type = true", "is_opening = false"] {
+                assert!(
+                    Config::parse(&format!(
+                        "[videos.\"episode.mp4\"]\njumps = [{{ {position} = {{ time = 10 }}, {metadata} }}]"
+                    ))
+                    .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn from_without_to_ends_at_start() {
         let config = Config::parse(
             r#"[videos."episode.mp4"]
-jumps = [{ from = { time = "12.5" }, is_opening = true }]"#,
+jumps = [{ from = { time = "12.5" }, type = "intro" }]"#,
         )
         .unwrap();
         let jump = &config.videos["episode.mp4"].jumps[0];

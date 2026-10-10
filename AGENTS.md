@@ -15,4 +15,4 @@
 - `src/main.rs` loads and validates all `.vj.toml` entries before prompting or launching playback. Config keys match filenames exactly; see README for the schema.
 - Playback requires Unix and `mpv` on `PATH`. All selected filenames are passed to one mpv process after `--`, at speed `1.5`; stdout/stderr are discarded.
 - Keep the private IPC socket path short: `src/playback.rs` deliberately uses a temporary directory under `/tmp` to avoid macOS Unix socket path-length limits.
-- Jump state resets per playlist entry, not filename, so repeated selections replay jumps. Frame positions use `container-fps` to convert to media seconds and wait when FPS is unavailable; `is_opening` is metadata, not a switch.
+- Jump state resets per playlist entry, not filename, so repeated selections replay jumps. Frame positions use `container-fps` to convert to media seconds and wait when FPS is unavailable; `type` is metadata (`intro`, `outro`, `ending`, or default `normal`), not a switch.
