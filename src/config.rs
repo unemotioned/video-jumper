@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -17,14 +17,14 @@ pub(crate) struct Video {
     pub jumps: Vec<Jump>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum Jump {
     Skip(Skip),
     End(End),
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Skip {
     pub from: Position,
@@ -34,7 +34,7 @@ pub(crate) struct Skip {
     pub _kind: JumpType,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct End {
     pub end: Position,
@@ -42,7 +42,7 @@ pub(crate) struct End {
     pub _kind: JumpType,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum JumpType {
     Intro,
@@ -52,14 +52,14 @@ pub(crate) enum JumpType {
     Normal,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Position {
     Frame(Number),
     Time(Number),
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(try_from = "RawNumber")]
 pub(crate) struct Number(f64);
 
@@ -151,17 +151,57 @@ impl Jump {
     }
 }
 
-impl Config {
+pub(crate) struct LiveConfig {
+    pub config: Config,
+    path: PathBuf,
+    observed: Result<Option<Vec<u8>>, String>,
+}
+
+impl LiveConfig {
     pub(crate) fn load(directory: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let path = directory.join(".vj.toml");
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => Self::parse(&contents)
-                .map_err(|error| format!("{}: {error}", path.display()).into()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(format!("{}: {error}", path.display()).into()),
+        let observed = Self::read(&path);
+        let config =
+            Self::parse(&observed).map_err(|error| format!("{}: {error}", path.display()))?;
+        Ok(Self {
+            config,
+            path,
+            observed,
+        })
+    }
+
+    fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
+        match std::fs::read(path) {
+            Ok(contents) => Ok(Some(contents)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.to_string()),
         }
     }
 
+    fn parse(contents: &Result<Option<Vec<u8>>, String>) -> Result<Config, String> {
+        match contents {
+            Ok(Some(bytes)) => {
+                Config::parse(std::str::from_utf8(bytes).map_err(|e| e.to_string())?)
+            }
+            Ok(None) => Ok(Config::default()),
+            Err(error) => Err(error.clone()),
+        }
+    }
+
+    pub(crate) fn refresh(&mut self) -> Result<bool, String> {
+        let observed = Self::read(&self.path);
+        if observed == self.observed {
+            return Ok(false);
+        }
+        // Remember failed edits too, so each error is reported only once.
+        self.observed = observed;
+        self.config = Self::parse(&self.observed)
+            .map_err(|error| format!("{}: {error}", self.path.display()))?;
+        Ok(true)
+    }
+}
+
+impl Config {
     pub(crate) fn parse(contents: &str) -> Result<Self, String> {
         let config: Self = toml::from_str(contents).map_err(|error| error.to_string())?;
         for (name, video) in &config.videos {
@@ -176,7 +216,54 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Config, Jump, JumpType};
+    use super::{Action, Config, Jump, JumpType, LiveConfig};
+
+    #[test]
+    fn live_config_handles_creation_invalid_edits_replacement_and_deletion() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(".vj.toml");
+        let mut live = LiveConfig::load(directory.path()).unwrap();
+        assert!(live.config.videos.is_empty());
+        assert!(!live.refresh().unwrap());
+
+        let contents = "[videos.\"episode.mp4\"]\njumps = [{ end = { time = 10 } }]";
+        std::fs::write(&path, contents).unwrap();
+        assert!(live.refresh().unwrap());
+        assert_eq!(
+            live.config.videos["episode.mp4"].jumps[0].action(15.0, None),
+            Some(Action::End)
+        );
+        assert!(!live.refresh().unwrap());
+
+        for invalid in [
+            b"[videos".as_slice(),
+            b"\xff",
+            b"[videos.bad]\njumps = [{ end = { time = -1 } }]",
+        ] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(live.refresh().is_err());
+            assert!(!live.refresh().unwrap());
+            assert_eq!(
+                live.config.videos["episode.mp4"].jumps[0].action(15.0, None),
+                Some(Action::End)
+            );
+            assert!(LiveConfig::load(directory.path()).is_err());
+        }
+
+        let replacement = directory.path().join("replacement");
+        std::fs::write(&replacement, contents.replace("10", "20")).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        assert!(live.refresh().unwrap());
+        assert_eq!(
+            live.config.videos["episode.mp4"].jumps[0].action(15.0, None),
+            None
+        );
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(live.refresh().unwrap());
+        assert!(live.config.videos.is_empty());
+        assert!(!live.refresh().unwrap());
+    }
 
     #[test]
     fn jump_types_are_validated_and_default_to_normal() {

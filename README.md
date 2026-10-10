@@ -62,6 +62,13 @@ is unavailable. Seeks request exact positioning, but trigger detection is polled
 and can be slightly late. Time positions are media time, independent of playback
 speed. Invalid configuration is reported before playback starts.
 
+During playback, `.vj.toml` is checked for content changes about every 250 ms,
+including creation, deletion, and replacement by an editor. Valid edits apply to
+the current and remaining videos without restarting `vj`. Invalid edits are
+reported once per change and the last valid configuration stays active. Deleting
+the file disables jumps. Unchanged jumps that already ran do not run again in the
+same playlist entry; new or modified jumps are evaluated at the current position.
+
 ## Source layout
 
 - `src/main.rs` — application flow, error reporting, and exit status.

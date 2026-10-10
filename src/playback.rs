@@ -10,17 +10,18 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::config::{Action, Config};
+use crate::config::{Action, LiveConfig};
 
 const PLAYBACK_SPEED: f32 = 1.5;
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const CONFIG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) fn play<'a>(
     videos: impl IntoIterator<Item = &'a str>,
-    config: &Config,
+    config: &mut LiveConfig,
 ) -> io::Result<()> {
     let videos: Vec<_> = videos.into_iter().collect();
     // A private, short path avoids Unix socket path-length limits on macOS.
@@ -140,7 +141,7 @@ fn report_playback(
     player: &mut Child,
     socket: &Path,
     videos: &[&str],
-    config: &Config,
+    config: &mut LiveConfig,
 ) -> io::Result<()> {
     let Some(mut ipc) = connect_ipc(player, socket)? else {
         return Ok(());
@@ -148,7 +149,18 @@ fn report_playback(
     let mut current_entry = None;
     let mut fired = Vec::new();
     let mut ended = false;
+    let mut last_config_check = None;
     while player.try_wait()?.is_none() {
+        if last_config_check.is_none_or(|last: Instant| last.elapsed() >= CONFIG_POLL_INTERVAL) {
+            match config.refresh() {
+                Ok(true) => eprintln!("\nReloaded .vj.toml"),
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("\nCould not reload config (keeping last valid config): {error}")
+                }
+            }
+            last_config_check = Some(Instant::now());
+        }
         let entry = get_property(&mut ipc, "playlist-pos")?.as_u64();
         let position = get_property(&mut ipc, "time-pos")?;
         let frame = get_property(&mut ipc, "estimated-frame-number")?;
@@ -158,27 +170,27 @@ fn report_playback(
             continue;
         }
         let filename = entry.and_then(|index| videos.get(index as usize));
-        let video = filename.and_then(|name| config.videos.get(*name));
+        let video = filename.and_then(|name| config.config.videos.get(*name));
         // Reset per playlist entry so repeated filenames replay their jumps.
         if current_entry != entry {
             if let Some(filename) = filename {
                 println!("\nPlaying: {filename}");
             }
             current_entry = entry;
-            fired = vec![false; video.map_or(0, |video| video.jumps.len())];
+            fired.clear();
             ended = false;
         }
         if let Some(video) = video
             && let Some(seconds) = position.as_f64()
             && !ended
         {
-            for (index, jump) in video.jumps.iter().enumerate() {
-                if !fired[index]
+            for jump in &video.jumps {
+                if !fired.contains(jump)
                     && let Some(action) = jump.action(seconds, fps)
                 {
                     ended = action == Action::End;
                     execute_action(&mut ipc, action)?;
-                    fired[index] = true;
+                    fired.push(jump.clone());
                     // A jump invalidates this time sample; poll again before acting.
                     break;
                 }

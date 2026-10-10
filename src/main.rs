@@ -8,14 +8,17 @@ use std::process::ExitCode;
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let directory = std::env::current_dir()?;
     // Validate all config entries before prompting or launching playback.
-    let config = config::Config::load(&directory)?;
+    let mut config = config::LiveConfig::load(&directory)?;
     let videos = videos::discover(&directory)?;
     if videos.is_empty() {
         return Err("No video files found".into());
     }
 
     let indices = selection::prompt(&videos)?;
-    playback::play(indices.iter().map(|&index| videos[index].as_str()), &config)?;
+    playback::play(
+        indices.iter().map(|&index| videos[index].as_str()),
+        &mut config,
+    )?;
     Ok(())
 }
 
