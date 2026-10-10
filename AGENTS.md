@@ -6,7 +6,7 @@
 - After every change, run `cargo build --release && cargo install --path .` after validation succeeds.
 - The package's binary is named `vj` (not `video-jumper`): run it with `cargo run --bin vj`.
 - Videos and optional `.vj.toml` are read from the process working directory. To target another directory, run there with `cargo run --manifest-path /absolute/path/to/vj-ai/Cargo.toml --bin vj`.
-- There are currently no wired-up tests; the README's `src/tests.rs` reference is stale. A successful `cargo test` alone does not verify behavior.
+- Jump configuration regression tests are in `src/config.rs`. A successful `cargo test` alone does not verify playback behavior.
 
 ## Behavior Constraints
 

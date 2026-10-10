@@ -37,7 +37,7 @@ Create `.vj.toml` in the directory containing your videos:
 jumps = [
   { from = { frame = "3391" }, to = { frame = "5541" }, is_opening = true },
   { from = { frame = "15675" }, to = { frame = "15969" }, is_opening = false },
-  { end = { time = "1405.989" } },
+  { from = { time = "1405.989" } },
 ]
 ```
 
@@ -45,6 +45,8 @@ The table key must match the video filename exactly. Add a table for each video
 you want to configure. Videos without a configuration play normally.
 
 - `from` / `to`: when playback enters this interval, seek to `to`.
+- `from` without `to`: once playback reaches `from`, skip the rest of the video
+  and move to the next selected video. If it is last, playback ends.
 - `end`: once playback reaches this position, finish the current video and move
   to the next selected video. If it is last, playback ends.
 - Positions use either `time` in seconds or `frame` (zero-based). Both quoted
@@ -65,7 +67,6 @@ speed. Invalid configuration is reported before playback starts.
 - `src/videos.rs` — video discovery and natural filename sorting.
 - `src/selection.rs` — numbered listing, input prompt, and selection parsing.
 - `src/playback.rs` — mpv process lifecycle and live status over JSON IPC.
-- `src/tests.rs` — selection and IPC regression tests.
 
 Validate changes with:
 

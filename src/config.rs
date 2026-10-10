@@ -28,7 +28,7 @@ pub(crate) enum Jump {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Skip {
     pub from: Position,
-    pub to: Position,
+    pub to: Option<Position>,
     // Opening status is metadata; all skips use the same playback rules.
     #[serde(default, rename = "is_opening")]
     pub _is_opening: bool,
@@ -107,15 +107,18 @@ impl Jump {
             Self::Skip(skip) => {
                 // Only same-unit bounds can be compared without the video's FPS.
                 let bounds = match (&skip.from, &skip.to) {
-                    (Position::Frame(from), Position::Frame(to))
-                    | (Position::Time(from), Position::Time(to)) => Some((from.0, to.0)),
+                    (Position::Frame(from), Some(Position::Frame(to)))
+                    | (Position::Time(from), Some(Position::Time(to))) => Some((from.0, to.0)),
                     _ => None,
                 };
                 if bounds.is_some_and(|(from, to)| to <= from) {
                     return Err("jump destination must be after its start");
                 }
                 skip.from.validate()?;
-                skip.to.validate()
+                if let Some(to) = &skip.to {
+                    to.validate()?;
+                }
+                Ok(())
             }
             Self::End(end) => end.end.validate(),
         }
@@ -125,7 +128,10 @@ impl Jump {
         match self {
             Self::Skip(skip) => {
                 let from = skip.from.seconds(fps)?;
-                let to = skip.to.seconds(fps)?;
+                let Some(to) = &skip.to else {
+                    return (time >= from).then_some(Action::End);
+                };
+                let to = to.seconds(fps)?;
                 (time >= from && time < to).then_some(Action::Seek(to))
             }
             Self::End(end) => (time >= end.end.seconds(fps)?).then_some(Action::End),
@@ -153,5 +159,58 @@ impl Config {
             }
         }
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, Config};
+
+    #[test]
+    fn from_without_to_ends_at_start() {
+        let config = Config::parse(
+            r#"[videos."episode.mp4"]
+jumps = [{ from = { time = "12.5" }, is_opening = true }]"#,
+        )
+        .unwrap();
+        let jump = &config.videos["episode.mp4"].jumps[0];
+        assert_eq!(jump.action(12.4, None), None);
+        assert_eq!(jump.action(12.5, None), Some(Action::End));
+        assert_eq!(jump.action(20.0, None), Some(Action::End));
+    }
+
+    #[test]
+    fn frame_without_to_waits_for_fps() {
+        let config = Config::parse(
+            r#"[videos."episode.mp4"]
+jumps = [{ from = { frame = 300 } }]"#,
+        )
+        .unwrap();
+        let jump = &config.videos["episode.mp4"].jumps[0];
+        assert_eq!(jump.action(10.0, None), None);
+        assert_eq!(jump.action(10.0, Some(0.0)), None);
+        assert_eq!(jump.action(9.9, Some(30.0)), None);
+        assert_eq!(jump.action(10.0, Some(30.0)), Some(Action::End));
+    }
+
+    #[test]
+    fn optional_to_preserves_validation_and_bounded_seeks() {
+        for jump in [
+            "{ from = { frame = 1.5 } }",
+            "{ from = { time = -1 } }",
+            "{ from = { time = 10 }, to = { time = 5 } }",
+            "{ from = { time = 10 }, to = { frame = 1.5 } }",
+        ] {
+            assert!(Config::parse(&format!("[videos.\"episode.mp4\"]\njumps = [{jump}]")).is_err());
+        }
+        let config = Config::parse(
+            r#"[videos."episode.mp4"]
+jumps = [{ from = { time = 10 }, to = { time = 20 } }]"#,
+        )
+        .unwrap();
+        let jump = &config.videos["episode.mp4"].jumps[0];
+        assert_eq!(jump.action(9.0, None), None);
+        assert_eq!(jump.action(10.0, None), Some(Action::Seek(20.0)));
+        assert_eq!(jump.action(20.0, None), None);
     }
 }
