@@ -14,6 +14,16 @@ more than 10 times, I came up with an idea:
 Requires `mpv` on `PATH` and macOS or Linux. Run `vj` in the video directory,
 then select videos to play at 1.5× speed.
 
+Playback progress is saved in `~/.cache/vj/vj.toml`, keyed by the video's directory
+(canonical absolute path). Running `vj --continue` (or `vj -C`)
+resumes the last video at its saved timestamp and continues
+the remaining selection (including duplicates). Each directory has independent
+progress. Run `vj` without flags to choose a new selection from the beginning.
+Progress is saved about every 250 ms and when playback control exits; resume
+accuracy depends on mpv's seeking. The last position is retained even when the
+playlist finishes. If no progress exists or the saved video was removed, selection
+is prompted again.
+
 mpv's stdout and stderr are discarded (`/dev/null`). A private Unix socket
 provides playback position through mpv's JSON IPC interface, polled about
 every 50 milliseconds:
@@ -76,6 +86,7 @@ same playlist entry; new or modified jumps are evaluated at the current position
 - `src/videos.rs` — video discovery and natural filename sorting.
 - `src/selection.rs` — numbered listing, input prompt, and selection parsing.
 - `src/playback.rs` — mpv process lifecycle and live status over JSON IPC.
+- `src/resume.rs` — directory-local playback progress and atomic persistence.
 
 Validate changes with:
 

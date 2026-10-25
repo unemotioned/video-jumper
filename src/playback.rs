@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::config::{Action, LiveConfig};
+use crate::resume::Recorder;
 
 const PLAYBACK_SPEED: f32 = 1.5;
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -22,8 +23,11 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) fn play<'a>(
     videos: impl IntoIterator<Item = &'a str>,
     config: &mut LiveConfig,
+    directory: &Path,
+    start: Option<f64>,
 ) -> io::Result<()> {
     let videos: Vec<_> = videos.into_iter().collect();
+    let mut recorder = Recorder::new(directory)?;
     // A private, short path avoids Unix socket path-length limits on macOS.
     #[cfg(unix)]
     let ipc_dir = tempfile::Builder::new().prefix("vj-").tempdir_in("/tmp")?;
@@ -36,7 +40,11 @@ pub(crate) fn play<'a>(
         r"\\.\pipe\{}-mpv",
         ipc_dir.path().file_name().unwrap().to_string_lossy()
     ));
-    let mut player = Command::new("mpv")
+    let mut command = Command::new("mpv");
+    if start.is_some() {
+        command.arg("--pause=yes");
+    }
+    let mut player = command
         .arg(format!("--speed={PLAYBACK_SPEED}"))
         .arg(format!("--input-ipc-server={}", socket.display()))
         .stdout(Stdio::null())
@@ -47,7 +55,10 @@ pub(crate) fn play<'a>(
         .spawn()
         .map_err(|error| io::Error::new(error.kind(), format!("Failed to launch MPV: {error}")))?;
 
-    let reporting = report_playback(&mut player, &socket, &videos, config);
+    let reporting = report_playback(&mut player, &socket, &videos, config, start, &mut recorder);
+    if let Err(error) = recorder.save() {
+        eprintln!("Could not save playback progress: {error}");
+    }
     println!();
     if let Err(error) = reporting {
         // A socket closing at normal player exit is expected.
@@ -142,6 +153,8 @@ fn report_playback(
     socket: &Path,
     videos: &[&str],
     config: &mut LiveConfig,
+    mut start: Option<f64>,
+    recorder: &mut Recorder,
 ) -> io::Result<()> {
     let Some(mut ipc) = connect_ipc(player, socket)? else {
         return Ok(());
@@ -170,6 +183,23 @@ fn report_playback(
             continue;
         }
         let filename = entry.and_then(|index| videos.get(index as usize));
+        if let Some(seconds) = start {
+            if filename.is_some() && position.as_f64().is_some() {
+                execute_action(&mut ipc, Action::Seek(seconds))?;
+                let response = request(&mut ipc, json!(["set_property", "pause", false]))?;
+                if response["error"] != "success" {
+                    return Err(io::Error::other("Could not unpause resumed playback"));
+                }
+                start = None;
+            }
+            thread::sleep(POLL_INTERVAL);
+            continue;
+        }
+        if let (Some(index), Some(seconds)) = (entry, position.as_f64())
+            && let Some(remaining) = videos.get(index as usize..)
+        {
+            recorder.observe(remaining, seconds)?;
+        }
         let video = filename.and_then(|name| config.config.videos.get(*name));
         // Reset per playlist entry so repeated filenames replay their jumps.
         if current_entry != entry {
